@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../database/db.service';
 import { calculateSalaryStructure, SalaryBreakdown } from './salary-calculator';
+import format from 'pg-format'; // ✅ IMPORT ADDED
 
 // Constants
 const TOTAL_DAYS_IN_MONTH = 30;
@@ -83,7 +84,10 @@ export class PayrollService {
     const employee = await this.getEmployee(employeeId);
     const dataset = await this.getDataset(datasetId);
 
+    // Pehle purana data clear karo
     await this.clearTimeLogs(employeeId);
+    
+    // 🔥 NEW: Ye ab super fast chalega
     const timeLogsInserted = await this.generateMonthlyTimeLogs(employeeId, datasetId);
 
     const attendance = await this.calculateAttendance(employeeId);
@@ -186,10 +190,11 @@ export class PayrollService {
         )
       `);
 
-      await this.db.query(`DROP TABLE IF EXISTS time_log CASCADE`);
+      // DROP TABLE hataya hai taaki bar bar data na ude, zaroorat ho to uncomment kar lena
+      // await this.db.query(`DROP TABLE IF EXISTS time_log CASCADE`);
 
       await this.db.query(`
-        CREATE TABLE time_log (
+        CREATE TABLE IF NOT EXISTS time_log (
           id SERIAL PRIMARY KEY,
           employee_id INTEGER NOT NULL,
           punch_in_time TIMESTAMP NOT NULL,
@@ -206,26 +211,43 @@ export class PayrollService {
     }
   }
 
+  // 🔥 THIS IS THE FIXED METHOD
   private async generateMonthlyTimeLogs(
     employeeId: number,
     datasetId: number,
   ): Promise<number> {
     const pattern = this.getDatasetPattern(datasetId);
-    let totalInserted = 0;
+    
+    // 1. Saara data ek 2D array me collect karo
+    const dataToInsert: any[][] = [];
 
     for (let day = 1; day <= TOTAL_DAYS_IN_MONTH; day++) {
       const dateStr = `2026-01-${day.toString().padStart(2, '0')}`;
 
       for (const session of pattern) {
-        await this.db.query(
-          'INSERT INTO time_log (employee_id, punch_in_time, punch_out_time) VALUES ($1, $2, $3)',
-          [employeeId, `${dateStr} ${session.start}`, `${dateStr} ${session.end}`],
-        );
-        totalInserted++;
+        // [employee_id, punch_in, punch_out]
+        dataToInsert.push([
+          employeeId,
+          `${dateStr} ${session.start}`,
+          `${dateStr} ${session.end}`,
+        ]);
       }
     }
 
-    return totalInserted;
+    if (dataToInsert.length === 0) return 0;
+
+    // 2. pg-format ka use karke EK QUERY banao
+    // %L ka matlab hai List of values
+    const query = format(
+      'INSERT INTO time_log (employee_id, punch_in_time, punch_out_time) VALUES %L',
+      dataToInsert
+    );
+
+    // 3. Bas 1 baar network call jayegi
+    console.log(`🚀 Bulk Inserting ${dataToInsert.length} rows...`);
+    await this.db.query(query);
+
+    return dataToInsert.length;
   }
 
   private getDatasetPattern(datasetId: number) {
