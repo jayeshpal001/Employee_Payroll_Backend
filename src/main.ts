@@ -7,7 +7,6 @@ async function bootstrap() {
   origin: process.env.CLIENT_URL,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true,
 });
   const port = process.env.PORT || 3000;
   await app.listen(port, '0.0.0.0');
